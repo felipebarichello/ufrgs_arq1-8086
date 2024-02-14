@@ -38,14 +38,14 @@ INCLUDE <LIBS\CLI.ASM>
 
 ;(CF == 1) <=> erro
 option_value PROC NEAR
-option_value_loop:
     mov si, di
 
+option_value_loop:
     dec cx
     jz  missing_value
 
     call next_token
-    cmp [di], 0 ;Se o token for vazio, ignorar e ler o próximo
+    cmp BYTE PTR [di], 0 ;Se o token for vazio, ignorar e ler o próximo
     je  option_value_loop
 
     ;Há argumentos após a opção. Verificar se é um valor.
