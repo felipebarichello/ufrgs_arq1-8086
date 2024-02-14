@@ -1,5 +1,5 @@
-; Biblioteca de constantes literais comuns
-;==========================================
+; Constantes de caracteres ASCII
+;================================
 
 ;ASCII
 BELL        EQU    07h ;Bell

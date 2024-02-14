@@ -69,10 +69,6 @@ ps_1:
 	
 printf_s	endp
 
-_print      MACRO   string:REQ, copy:=<lea>
-	copy bx, string
-	call printf_s
-ENDM
 
 ;
 ;====================================================================

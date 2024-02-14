@@ -1,11 +1,15 @@
-.MODEL small
-
-;Macros e constantes
-INCLUDE <LIBS\CONSTS.ASM>
+;Macros e constantes fixas
 INCLUDE <LIBS\SYSCALL.ASM>
+INCLUDE <LIBS\ASCII.ASM>
 INCLUDE <LIBS\CESAR.ASM>
 
-.STACK
+;Parâmetros do programa
+STACK_SIZE  EQU 0800h ;(2 kb)
+BUFFER_SIZE EQU 0400h ;(1 kb)
+
+.MODEL small
+
+.STACK      STACK_SIZE
 
 .DATA
     ;Strings constantes de uso interno
@@ -13,19 +17,23 @@ INCLUDE <LIBS\CESAR.ASM>
     str_output_file_default   DB "a.out",0
     str_voltage_default       DB "127",0
 
-    ;Strings constantes de informação
+    ;Strings constantes de relatório
+    str_crlf                  DB CR,LF,0
     str_prtprm_i              DB "Arquivo de entrada: ",0
     str_prtprm_o              DB CR,LF,"Arquivo de saida: ",0
     str_prtprm_v              DB CR,LF,"Tensao esperada: ",0
-    str_ptrprm_end            DB CR,LF,0
 
     ;Strings constantes de erro
+    str_error                 DB "ERRO: ",0
     str_invalid_argument_pre  DB "Argumento [",0
     str_invalid_argument_post DB "] invalido.",CR,LF,0
     str_missing_value_pre     DB "Opcao [",0
     str_missing_value_post    DB "] sem parametro.",CR,LF,0
     str_invalid_voltage       DB "Parametro da opcao [-v] deve ser 127 ou 220.",CR,LF,0
-    str_error_fopen           DB "Erro ao abrir arquivo.",CR,LF,0
+    str_error_ifopen          DB "Erro ao abrir arquivo de entrada.",CR,LF,0
+    str_error_ifread          DB "Erro ao ler arquivo de entrada.",CR,LF,0
+    str_error_not_found       DB "Arquivo nao encontrado.",CR,LF,0
+    str_error_ifclose         DB "Erro ao fechar arquivo de entrada.",CR,LF,0
 
     ;Variáveis para a CLI
     command      DB 127 DUP(?)
@@ -36,9 +44,9 @@ INCLUDE <LIBS\CESAR.ASM>
 
     ;Variáveis para a leitura do arquivo
     fhandle          DW ?
-    volt_buffer_ptr  DW ?
-    volt_buffer_size DW ?
+    file_buffer   DW ?
 
+dbg_read DB "Arquivo lido com sucesso",0
 
 .CODE
 
@@ -46,6 +54,16 @@ INCLUDE <LIBS\CESAR.ASM>
 INCLUDE <LIBS\STRING.ASM>
 INCLUDE <LIBS\CECHIN.ASM>
 INCLUDE <LIBS\CLI.ASM>
+
+_print      MACRO   msg:REQ, copy:=<lea>
+	copy bx, msg
+	call printf_s
+ENDM
+
+_error       MACRO  cause:REQ, copy:=<lea>
+    _print str_error
+    _print cause, copy
+ENDM
 
 ;Coloca um ponteiro para o valor da opção em `di` e verifica a sua validade.
 ;(CF == 1) <=> erro
@@ -76,6 +94,7 @@ missing_value:
     ret
 option_value ENDP
 
+
 .STARTUP
     INVOKE get_args, ADDR command
 
@@ -104,7 +123,7 @@ cli_invalid:
     _print di, mov
     _print str_invalid_argument_post
 
-    jmp end_program
+    jmp exit_err
 
 cli_is_option:
     mov ah, [di+2] ;Armazenar segundo caractere da opção (após o '-')
@@ -133,7 +152,7 @@ cli_is_option:
 cli_i:
     ;Obter o valor da opção. Se não houver valor, terminar programa.
     call option_value
-    jc  end_program
+    jc  exit_err
 
     mov input_file, di ;Armazenar nome do arquivo de entrada
     
@@ -144,7 +163,7 @@ cli_i:
 cli_o:
     ;Obter o valor da opção. Se não houver valor, terminar programa.
     call option_value
-    jc  end_program
+    jc  exit_err
 
     mov output_file, di ;Armazenar nome do arquivo de saída
     jmp cli_continue
@@ -152,7 +171,7 @@ cli_o:
 cli_v:
     ;Obter o valor da opção. Se não houver valor, terminar programa.
     call option_value
-    jc  end_program
+    jc  exit_err
 
     ;Converter string para número
     mov bx, di
@@ -167,7 +186,7 @@ cli_v:
 
     ;Número inválido. Imprimir erro e sair.
     _print str_invalid_voltage
-    jmp end_program
+    jmp exit_err
 
 cli_v_valid:
     mov voltage_str, di ;Armazenar string do valor da tensão
@@ -185,31 +204,73 @@ cli_end:
     _print output_file, mov
     _print str_prtprm_v
     _print voltage_str, mov
-    _print str_ptrprm_end
+    _print str_crlf
 
-    ; ;Abrir arquivo
-    ; _fopen input_file, FMODE_READ
-    ; jnc @F
+measures_open:
+    ;Alocar espaço para o buffer
+    sub sp, BUFFER_SIZE
+    mov file_buffer, sp
 
-    ; ;Tratar erro, se houver
-    ; _print str_error_fopen
-    ; jmp end_program
+    ;Abrir arquivo
+    _fopen input_file, FMODE_READ
+    jnc measures_read
+
+    ;Falha ao abrir arquivo. Tratar erro.
+    ;`ax` contém o código do erro.
+    mov cx, ax ;printf_s usa `ax`
+
+    _error str_error_ifopen
+    
+    cmp cx, 2 ;Erro de arquivo não encontrado
+    jne @F
+
+    ;Arquivo não encontrado
+    _print str_error_not_found
 
 @@:
-    ; ;Apenas os primeiros 16 kb são lidos.
-    ; _fread fhandle, sp, 3FFFh
-    ; mov volt_buffer_ptr, sp
-    ; mov volt_buffer_size, ax ;Armazenar tamanho do buffer para desalocá-lo posteriormente
-    ; sub sp, ax ;Reservar espaço utilizado pelo buffer
-    ; _fclose fhandle
+    ;Outro erro
+    jmp exit_err
 
-    ; mov di, volt_buffer_ptr
+measures_read:
+    mov fhandle, ax
+
+    ;Ler arquivo para o buffer. São lidos no máximo BUFFER_SIZE bytes por vez.
+    _fread fhandle, sp, BUFFER_SIZE
+    jnc measures_process
+
+    ;Falha ao ler arquivo. Tratar erro.
+    _print str_error_ifread
+    jmp exit_err
+
+measures_process:
+    ;DBG
+    _print dbg_read
+    jmp measures_close
+
+
+measures_close:
+    _fclose fhandle
+    jnc @F
+
+    ;Falha ao fechar arquivo. Tratar erro.
+    _print str_error_ifclose
+    jmp exit_err
+
+@@:
+    ; mov di, file_buffer
     ; mov al, ','
-    ; _next_token
+    ; call next_token
 
+    ;TODO: Relatório impresso
+    ;TODO: Relatório arquivado
+
+    jmp exit_ok
+
+exit_err:
+exit_ok:
 end_program:
     ;Fim do programa. Desalocar buffer.
-    add sp, volt_buffer_size
+    add sp, BUFFER_SIZE
 
 .EXIT
 

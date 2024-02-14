@@ -1,5 +1,5 @@
-; Instruções emprestadas do computador Cesar
-;============================================
+; Instruções emprestadas do computador Cesar, em forma de macros
+;================================================================
 
 
 _clr        MACRO   sym
