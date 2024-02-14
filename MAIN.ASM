@@ -8,20 +8,31 @@ INCLUDE <LIBS\CESAR.ASM>
 .STACK
 
 .DATA
-    ;Strings constantes
+    ;Strings constantes de uso interno
     str_input_file_default    DB "a.in",0
     str_output_file_default   DB "a.out",0
+    str_voltage_default       DB "127",0
+
+    ;Strings constantes de informação
+    str_prtprm_i              DB "Arquivo de entrada: ",0
+    str_prtprm_o              DB CR,LF,"Arquivo de saida: ",0
+    str_prtprm_v              DB CR,LF,"Tensao esperada: ",0
+    str_ptrprm_end            DB CR,LF,0
+
+    ;Strings constantes de erro
     str_invalid_argument_pre  DB "Argumento [",0
     str_invalid_argument_post DB "] invalido.",CR,LF,0
     str_missing_value_pre     DB "Opcao [",0
     str_missing_value_post    DB "] sem parametro.",CR,LF,0
     str_invalid_voltage       DB "Parametro da opcao [-v] deve ser 127 ou 220.",CR,LF,0
+    str_error_fopen           DB "Erro ao abrir arquivo.",CR,LF,0
 
     ;Variáveis para a CLI
     command      DB 127 DUP(?)
     input_file   DW OFFSET str_input_file_default
     output_file  DW OFFSET str_output_file_default
     voltage      DB 127
+    voltage_str  DW OFFSET str_voltage_default
 
     ;Variáveis para a leitura do arquivo
     fhandle          DW ?
@@ -57,14 +68,9 @@ option_value_loop:
     ret
 
 missing_value:
-    lea bx, str_missing_value_pre
-    call printf_s
-
-    mov bx, si
-    call printf_s
-
-    lea bx, str_missing_value_post
-    call printf_s
+    _print str_missing_value_pre
+    _print si, mov
+    _print str_missing_value_post
 
     stc
     ret
@@ -94,14 +100,9 @@ cli_read_option:
 
 ;Não é uma opção. Imprimir erro e sair.
 cli_invalid:
-    lea bx, str_invalid_argument_pre
-    call printf_s
-
-    mov bx, di
-    call printf_s
-
-    lea bx, str_invalid_argument_post
-    call printf_s
+    _print str_invalid_argument_pre
+    _print di, mov
+    _print str_invalid_argument_post
 
     jmp end_program
 
@@ -135,6 +136,9 @@ cli_i:
     jc  end_program
 
     mov input_file, di ;Armazenar nome do arquivo de entrada
+    
+    mov bx, di
+
     jmp cli_continue
 
 cli_o:
@@ -162,21 +166,36 @@ cli_v:
     je cli_v_valid
 
     ;Número inválido. Imprimir erro e sair.
-    lea bx, str_invalid_voltage
-    call printf_s
+    _print str_invalid_voltage
     jmp end_program
 
 cli_v_valid:
-    mov voltage, al
+    mov voltage_str, di ;Armazenar string do valor da tensão
+    mov voltage, al ;Armazenar valor da tensão
 
 cli_continue:
     dec cx
     jnz cli_read_option ;Se ainda houver tokens, continuar o loop.
 
 cli_end:
+    ;Imprimir parâmetros
+    _print str_prtprm_i
+    _print input_file, mov
+    _print str_prtprm_o
+    _print output_file, mov
+    _print str_prtprm_v
+    _print voltage_str, mov
+    _print str_ptrprm_end
+
     ; ;Abrir arquivo
     ; _fopen input_file, FMODE_READ
+    ; jnc @F
 
+    ; ;Tratar erro, se houver
+    ; _print str_error_fopen
+    ; jmp end_program
+
+@@:
     ; ;Apenas os primeiros 16 kb são lidos.
     ; _fread fhandle, sp, 3FFFh
     ; mov volt_buffer_ptr, sp

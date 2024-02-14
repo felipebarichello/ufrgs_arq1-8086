@@ -15,7 +15,7 @@ ENDM
 ;   `ax` = handle ou erro
 _fopen      MACRO   file_name, mode
     mov dx, file_name
-    _syscall 3D00h+mode, ax
+    _syscall (3D00h+mode), ax
 ENDM
 
 ;Argumentos:
