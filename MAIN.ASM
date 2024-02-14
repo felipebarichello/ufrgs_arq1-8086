@@ -36,6 +36,7 @@ INCLUDE <LIBS\STRING.ASM>
 INCLUDE <LIBS\CECHIN.ASM>
 INCLUDE <LIBS\CLI.ASM>
 
+;Coloca um ponteiro para o valor da opção em `di` e verifica a sua validade.
 ;(CF == 1) <=> erro
 option_value PROC NEAR
     mov si, di
