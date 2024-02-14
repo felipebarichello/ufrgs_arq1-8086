@@ -21,7 +21,7 @@ strcpy      ENDP
 ;Substitui todas as instâncias do separador por '\0', transformando uma string em uma sequência de tokens.
 tokenize    PROC    NEAR
     _clr bx
-    mov cx, 1 ;Número de tokens. Começa em 1, pois se não houver separadores, há um token.
+    _clr cx ;Número de tokens - 1
     
 tokenize_loop:
     mov ah, [di+bx]
@@ -41,6 +41,12 @@ tokenize_end:
     ret
 tokenize    ENDP
 
+_tokenize   MACRO   string:REQ, separator:=<' '>, copy:=<lea>
+    copy di, string
+    mov al, separator
+    call tokenize
+ENDM
+
 
 ;Retorna o próximo token de uma sequência de tokens
 ;Só funciona corretamente se (DF == 0)
@@ -56,8 +62,3 @@ next_token  PROC    NEAR USES cx
 
     ret
 next_token  ENDP
-
-_next_token MACRO   counter:=<cx>
-    call next_token
-    dec counter ;Decrementa o contador de tokens
-ENDM 
