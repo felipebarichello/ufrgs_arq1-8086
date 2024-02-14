@@ -111,14 +111,20 @@ cli_is_option:
     jnz cli_invalid
 
     mov ah, [di+1] ;Armazenar letra da opção
+    cmp ah, 'a'
+    jnb  @F ;Pula conversão se for letra minúscula
 
+    ;É letra maiúscula (ou inválido). Converter para minúscula.
+    add ah, ('a'-'A')
+
+@@:
     sub ah, 'i' ;Verificar se é '-i'
     je  cli_i
 
     sub ah, 'o'-'i' ;Verificar se é '-o'
     je  cli_o
 
-    sub ah, 'v'-'o'-'i' ;Verificar se é '-v'
+    sub ah, 'v'-'o' ;Verificar se é '-v'
     je  cli_v
 
     jmp cli_invalid ;Opção inválida. Imprimir erro e sair.
@@ -158,6 +164,7 @@ cli_v:
     ;Número inválido. Imprimir erro e sair.
     lea bx, str_invalid_voltage
     call printf_s
+    jmp end_program
 
 cli_v_valid:
     mov voltage, al
