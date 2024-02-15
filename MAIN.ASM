@@ -397,7 +397,7 @@ measures_line_break:
 
     ;Verificar se a linha é válida e/ou tratada
     cmp ah, 3 ;Verificar se foram lidas 3 fases
-    _clr ah ;Zerar contador de fases
+    mov ah, 0 ;Zerar contador de fases. Não pode-se usar `_clr` pois este altera as flags
     mov needs_comma, 0 ;Resetar flag de vírgula
     jnb @F ;Se foram lidas menos de 3 fases, tratar erro
 
@@ -418,7 +418,7 @@ measures_line_break:
 measures_check_double_line_break:
     ;Há uma nova linha se e somente se os dois caracteres forem iguais
     cmp al, bl
-    jne measures_read_parse
+    jne measures_read_lods
 
     ;Os dois caracteres são iguais. Há uma nova linha.
     jmp measures_line_break
