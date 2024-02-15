@@ -291,9 +291,16 @@ measures_read_parse:
     ;É um número ASCII. Transformar string em número se não houver uma vírgula faltando.
     ;Verificar ausência de vírgula
     cmp needs_comma, 0
-    je  measures_read_invalid
+    jne measures_read_invalid ;Se for necessário uma vírgula, não poderia haver um número
 
-    mov bx, si ;Armazenar ponteiro para o início do número
+    inc ah ;Incrementar contador de fases
+    cmp ah, 3 ;Verificar em que fase está
+    ja  measures_read_invalid ;Se esta é a quarta fase fase, a linha é inválida
+    
+    inc needs_comma ;Marcar que é necessário uma vírgula para separar os valores
+
+@@:
+    lea bx, [si-1] ;Armazenar ponteiro para o início do número
     
 @@:
     lodsb ;Procurar fim do número
@@ -303,14 +310,15 @@ measures_read_parse:
     jna @B
 
 @@:
-    ;Fim do número. `si` aponta para o primeiro caractere que não faz parte do número. `al` é o seu valor.
+    ;Fim do número. `si` aponta para o segundo caractere que não faz parte do número.
+    ;`al` é o valor do primeiro caractere que não faz parte do número.
     ;Salvar registradores
     push ax
     push cx
 
     mov dh, ah ;Salvar número da fase
 
-    mov [si], 0 ;Colocar um '\0' no fim do número. O caractere sobrescrito estará em `al` após um `pop ax`.
+    mov BYTE PTR [si-1], 0 ;Colocar um '\0' no fim do número. O caractere sobrescrito estará em `al` após um `pop ax`.
     call atoi ;Converter string para número
 
     ;Setar número da fase como offset
@@ -319,16 +327,13 @@ measures_read_parse:
 
     ;Verificar se é um valor válido
     cmp ax, MAX_VOLTAGE
-    jna measures_read_invalid
+    ja  measures_read_invalid ;Tensão acima do valor máximo
 
     mov phases[bx], ax ;Armazenar valor da fase
 
     ;Restaurar registradores
     pop cx
     pop ax
-
-    inc ah ;Incrementar contador de fases
-    inc needs_comma ;Marcar que é necessário uma vírgula para separar os valores
     
     ;O caractere sobrescrito está em `al`. Continuar lendo a partir dele (não executar o `lodsb`).
     jmp measures_read_parse
@@ -380,7 +385,7 @@ measures_read_above:
 measures_comma:
     ;Verificar se é necessário uma vírgula
     cmp needs_comma, 0
-    jne measures_read_invalid
+    je  measures_read_invalid ;Não era necessário uma vírgula. Erro.
 
     ;Era necessário uma vírgula. Resetar flag.
     mov needs_comma, 0
@@ -394,7 +399,7 @@ measures_line_break:
     cmp ah, 3 ;Verificar se foram lidas 3 fases
     _clr ah ;Zerar contador de fases
     mov needs_comma, 0 ;Resetar flag de vírgula
-    jb  @F ;Se foram lidas menos de 3 fases, tratar erro
+    jnb @F ;Se foram lidas menos de 3 fases, tratar erro
 
     ;Linha inválida e não tratada
     INVOKE invalid_line, str_input_file_default, str_input_file_default ;TODO: Passar número e conteúdo da linha
