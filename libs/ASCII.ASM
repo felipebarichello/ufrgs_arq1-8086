@@ -9,4 +9,6 @@ TAB         EQU    09h ;Tab (\t)
 LF          EQU    0Ah ;Line Feed (\n)
 CR          EQU    0Dh ;Carriage Return (\r)
 ESCAPE      EQU    1Bh ;Escape (\e)
+DQUOTE      EQU    22h ;Double Quote (")
+SQUOTE      EQU    27h ;Single Quote (')
 DEL         EQU    7Fh ;Delete

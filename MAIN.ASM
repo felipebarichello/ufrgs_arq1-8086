@@ -36,7 +36,8 @@ MAX_VOLTAGE EQU 499
     str_error_not_found       DB "Arquivo nao encontrado.",CR,LF,0
     str_error_ifclose         DB "Erro ao fechar arquivo de entrada.",CR,LF,0
     str_invalid_measure1      DB "Linha [",0
-    str_invalid_measure2      DB "] invalida: ",0
+    str_invalid_measure2      DB "] invalida: ",DQUOTE,0
+    str_invalid_measure3      DB DQUOTE,CR,LF,0
 
     ;Variáveis para a CLI
     command     DB 127 DUP(?)
@@ -54,6 +55,7 @@ MAX_VOLTAGE EQU 499
     error_ocurred DB 0 ;Flag de erro para quando o erro não pode terminar o programa (por exemplo, enquanto um arquivo está aberto)
     phases        DW 3 DUP(?)
     needs_comma   DB 0 ;Flag que indica se é necessário uma vírgula agora para separar os valores
+    int_buffer    DB 6 DUP(?) ;Buffer para conversão de inteiros para string. Espaço para 65535 + '\0'.        
 
 
 .CODE
@@ -102,20 +104,6 @@ missing_value:
     stc
     ret
 option_value ENDP
-
-
-invalid_line PROC   NEAR C USES ax, line_number, line_start_ptr
-    inc error_ocurred ;Marcar erro
-    mov ah, -1 ;Marcar linha como inválida
-
-    _print str_invalid_measure1
-    _print line_number ;TODO: Imprimir número da linha
-    _print str_invalid_measure2
-    _print line_start_ptr ;TODO: Imprimir conteúdo da linha
-    _print str_crlf
-
-    ret
-invalid_line ENDP
 
 
 .STARTUP
@@ -273,7 +261,8 @@ measures_read_setup:
     ;`ah` conta quantas fases foram lidas na medida atual
     ;(ah < 0) => (linha inválida)
     _clr ah
-    _clr cx ;`cx` marca o instante da medida (o número de linhas do arquivo)
+    mov cx, 1 ;`cx` marca a linha atual (o número de linhas do arquivo)
+    mov di, si ;`di` marca o início da linha atual
 
 
 ;jmp aqui para ler o próximo caractere e parseá-lo
@@ -334,6 +323,9 @@ measures_read_parse:
     ;Restaurar registradores
     pop cx
     pop ax
+
+    ;O caractere sobrescrito está em `al`. Restaurá-lo.
+    mov BYTE PTR [si-1], al
     
     ;O caractere sobrescrito está em `al`. Continuar lendo a partir dele (não executar o `lodsb`).
     jmp measures_read_parse
@@ -391,20 +383,41 @@ measures_comma:
     mov needs_comma, 0
     jmp measures_read_lods
 
+
+;Quebra de linha ('\r', '\n', "\r\n" ou "\n\r")
 measures_line_break:
-    ;Quebra de linha
-    inc cx ;Incrementar contador de linhas
-
-    ;Verificar se a linha é válida e/ou tratada
+    ;Verificar se a linha é válida
     cmp ah, 3 ;Verificar se foram lidas 3 fases
-    mov ah, 0 ;Zerar contador de fases. Não pode-se usar `_clr` pois este altera as flags
+    je  measures_line_ok
+
+    ;Se foram lidas um número de fases diferente de 3,
+    ;ou caso a linha já tenha sido marcada como inválida, tratar erro
+    
+    ;Salvar o caractere atual na stack
+    push ax ;Caractere atual de quebra de linha
+
+    ;Linha inválida 
+    inc error_ocurred ;Marcar erro para quando o arquivo for fechado
+    
+    _print str_invalid_measure1 ;Imprimir o começo da mensagem de erro
+    mov ax, cx ;Número da linha
+    mov bx, OFFSET int_buffer ;Carregar buffer
+    call sprintf_w ;Transformar o número da linha em string
+    _print int_buffer ;Imprimir número da linha
+    _print str_invalid_measure2 ;Imprimir o meio da mensagem de erro
+
+    mov BYTE PTR [si-1], 0 ;Colocar um '\0' no fim da linha
+    _print di, mov ;Imprimir todo o conteúdo da linha antes da quebra de linha
+    _print str_invalid_measure3 ;Imprimir quebra de linha
+
+    pop ax ;Restaurar caractere atual de quebra de linha
+
+measures_line_ok:
+    _clr ah
     mov needs_comma, 0 ;Resetar flag de vírgula
-    jnb @F ;Se foram lidas menos de 3 fases, tratar erro
+    inc cx ;Incrementar contador de linhas
+    mov di, si ;Salvar início da nova linha. `si` aponta para o caractere após a quebra de linha
 
-    ;Linha inválida e não tratada
-    INVOKE invalid_line, str_input_file_default, str_input_file_default ;TODO: Passar número e conteúdo da linha
-
-@@:    
     ;Linha válida ou já tratada
     ;Verificar se o próximo caractere é um caractere de quebra de linha diferente
     mov bl, al
@@ -418,15 +431,20 @@ measures_line_break:
 measures_check_double_line_break:
     ;Há uma nova linha se e somente se os dois caracteres forem iguais
     cmp al, bl
-    jne measures_read_lods
+    je  @F
+    
+    ;Os dois caracteres são diferentes. É um "\r\n" ou "\n\r". A nova linha está então no próximo caractere.
+    inc di
+    jmp measures_read_lods
 
+@@:
     ;Os dois caracteres são iguais. Há uma nova linha.
     jmp measures_line_break
 
 
 ;A linha não é válida. Imprimir erro e continuar a partir da próxima linha.
 measures_read_invalid:
-    INVOKE invalid_line, str_input_file_default, str_input_file_default ;TODO: Passar número e conteúdo da linha
+    mov ah, -1 ;Marcar linha como inválida
 
 measures_skip_line_loop:
     ;Encontrar próxima linha

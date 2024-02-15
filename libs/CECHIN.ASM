@@ -187,8 +187,10 @@ sw_continue:
 ;		m = m/10;
 	mov		dx,0
 	mov		ax,sw_m
+	push    bp
 	mov		bp,10
 	div		bp
+	pop     bp
 	mov		sw_m,ax
 	
 ;		--k;
