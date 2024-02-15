@@ -261,7 +261,7 @@ measures_read_setup:
     ;`ah` conta quantas fases foram lidas na medida atual
     ;(ah < 0) => (linha inválida)
     _clr ah
-    mov cx, 1 ;`cx` marca a linha atual (o número de linhas do arquivo)
+    _clr cx ;`cx` marca a linha atual (o número de linhas do arquivo)
     mov di, si ;`di` marca o início da linha atual
 
 
@@ -316,8 +316,17 @@ measures_read_parse:
 
     ;Verificar se é um valor válido
     cmp ax, MAX_VOLTAGE
-    ja  measures_read_invalid ;Tensão acima do valor máximo
+    jna @F
 
+    ;Tensão acima da máxima. Tratar erro.
+    ;Restaurar estado do programa
+    pop cx
+    pop ax
+    mov BYTE PTR [si-1], al ;O caractere sobrescrito está em `al`. Restaurá-lo.
+
+    jmp measures_read_invalid ;Linha inválida
+
+@@:
     mov phases[bx], ax ;Armazenar valor da fase
 
     ;Restaurar registradores
@@ -386,6 +395,8 @@ measures_comma:
 
 ;Quebra de linha ('\r', '\n', "\r\n" ou "\n\r")
 measures_line_break:
+    inc cx ;Incrementar contador de linhas
+
     ;Verificar se a linha é válida
     cmp ah, 3 ;Verificar se foram lidas 3 fases
     je  measures_line_ok
@@ -415,7 +426,6 @@ measures_line_break:
 measures_line_ok:
     _clr ah
     mov needs_comma, 0 ;Resetar flag de vírgula
-    inc cx ;Incrementar contador de linhas
     mov di, si ;Salvar início da nova linha. `si` aponta para o caractere após a quebra de linha
 
     ;Linha válida ou já tratada
@@ -431,15 +441,11 @@ measures_line_ok:
 measures_check_double_line_break:
     ;Há uma nova linha se e somente se os dois caracteres forem iguais
     cmp al, bl
-    je  @F
+    je  measures_line_break ;Os dois caracteres são iguais. São duas quebras de linha.
     
-    ;Os dois caracteres são diferentes. É um "\r\n" ou "\n\r". A nova linha está então no próximo caractere.
-    inc di
+    ;Os dois caracteres são diferentes. É um "\r\n" ou "\n\r". Não há nova linha.
+    inc di ;Pular o segundo caractere da quebra de linha para fins de armazenar o início da próxima linha
     jmp measures_read_lods
-
-@@:
-    ;Os dois caracteres são iguais. Há uma nova linha.
-    jmp measures_line_break
 
 
 ;A linha não é válida. Imprimir erro e continuar a partir da próxima linha.
