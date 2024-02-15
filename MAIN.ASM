@@ -4,8 +4,9 @@ INCLUDE <LIBS\ASCII.ASM>
 INCLUDE <LIBS\CESAR.ASM>
 
 ;Parâmetros do programa
-STACK_SIZE  EQU 0800h ;(2 kb)
-BUFFER_SIZE EQU 0400h ;(1 kb)
+STACK_SIZE  EQU 0400h ;(1 kb)
+BUFFER_SIZE EQU 2000h ;(16 kb)
+MAX_VOLTAGE EQU 499
 
 .MODEL small
 
@@ -34,19 +35,26 @@ BUFFER_SIZE EQU 0400h ;(1 kb)
     str_error_ifread          DB "Erro ao ler arquivo de entrada.",CR,LF,0
     str_error_not_found       DB "Arquivo nao encontrado.",CR,LF,0
     str_error_ifclose         DB "Erro ao fechar arquivo de entrada.",CR,LF,0
+    str_invalid_measure1      DB "Linha [",0
+    str_invalid_measure2      DB "] invalida: ",0
 
     ;Variáveis para a CLI
-    command      DB 127 DUP(?)
-    input_file   DW OFFSET str_input_file_default
-    output_file  DW OFFSET str_output_file_default
-    voltage      DB 127
-    voltage_str  DW OFFSET str_voltage_default
+    command     DB 127 DUP(?)
+    input_file  DW OFFSET str_input_file_default
+    output_file DW OFFSET str_output_file_default
+    voltage     DW 127
+    voltage_str DW OFFSET str_voltage_default
 
-    ;Variáveis para a leitura do arquivo
-    fhandle          DW ?
-    file_buffer   DW ?
+    ;Variáveis para manipulação de arquivos
+    fhandle         DW ?
+    file_buffer     DB BUFFER_SIZE DUP(?)
+    bytes_read      DW ?
+    
+    ;Outras variáveis
+    error_ocurred DB 0 ;Flag de erro para quando o erro não pode terminar o programa (por exemplo, enquanto um arquivo está aberto)
+    phases        DW 3 DUP(?)
+    needs_comma   DB 0 ;Flag que indica se é necessário uma vírgula agora para separar os valores
 
-dbg_read DB "Arquivo lido com sucesso",0
 
 .CODE
 
@@ -64,6 +72,7 @@ _error       MACRO  cause:REQ, copy:=<lea>
     _print str_error
     _print cause, copy
 ENDM
+
 
 ;Coloca um ponteiro para o valor da opção em `di` e verifica a sua validade.
 ;(CF == 1) <=> erro
@@ -95,12 +104,28 @@ missing_value:
 option_value ENDP
 
 
+invalid_line PROC   NEAR C USES ax, line_number, line_start_ptr
+    inc error_ocurred ;Marcar erro
+    mov ah, -1 ;Marcar linha como inválida
+
+    _print str_invalid_measure1
+    _print line_number ;TODO: Imprimir número da linha
+    _print str_invalid_measure2
+    _print line_start_ptr ;TODO: Imprimir conteúdo da linha
+    _print str_crlf
+
+    ret
+invalid_line ENDP
+
+
 .STARTUP
-    INVOKE get_args, ADDR command
+    INVOKE get_args, OFFSET command
 
     ;Igualar o ES ao DS para facilitar a manipulação de strings
     mov ax, ds 
     mov es, ax
+
+    cld ;Garantir que a string será lida da esquerda para a direita
 
     ;Tokenizar a string de comando
     _tokenize command
@@ -180,7 +205,6 @@ cli_v:
     ;Verificar se o número é válido
     cmp ax, 127
     je  cli_v_valid
-
     cmp ax, 220
     je cli_v_valid
 
@@ -190,7 +214,7 @@ cli_v:
 
 cli_v_valid:
     mov voltage_str, di ;Armazenar string do valor da tensão
-    mov voltage, al ;Armazenar valor da tensão
+    mov voltage, ax ;Armazenar valor da tensão
 
 cli_continue:
     dec cx
@@ -206,14 +230,11 @@ cli_end:
     _print voltage_str, mov
     _print str_crlf
 
-measures_open:
-    ;Alocar espaço para o buffer
-    sub sp, BUFFER_SIZE
-    mov file_buffer, sp
 
+measures_open:
     ;Abrir arquivo
     _fopen input_file, FMODE_READ
-    jnc measures_read
+    jnc measures_open_end
 
     ;Falha ao abrir arquivo. Tratar erro.
     ;`ax` contém o código do erro.
@@ -222,31 +243,199 @@ measures_open:
     _error str_error_ifopen
     
     cmp cx, 2 ;Erro de arquivo não encontrado
-    jne @F
+    jne @F ;Outro erro
 
     ;Arquivo não encontrado
     _print str_error_not_found
 
 @@:
-    ;Outro erro
     jmp exit_err
 
-measures_read:
+measures_open_end:
     mov fhandle, ax
 
+
+measures_fread:
+    mov si, OFFSET file_buffer ;Setar `si` para usar com instruções de string
+
     ;Ler arquivo para o buffer. São lidos no máximo BUFFER_SIZE bytes por vez.
-    _fread fhandle, sp, BUFFER_SIZE
-    jnc measures_process
+    _fread fhandle, si, BUFFER_SIZE
+    jnc measures_read_setup
 
     ;Falha ao ler arquivo. Tratar erro.
-    _print str_error_ifread
-    jmp exit_err
-
-measures_process:
-    ;DBG
-    _print dbg_read
+    inc error_ocurred
+    _error str_error_ifread
     jmp measures_close
 
+measures_read_setup:
+    mov bytes_read, ax ;Armazenar quantidade de bytes lidos
+
+    ;`ah` conta quantas fases foram lidas na medida atual
+    ;(ah < 0) => (linha inválida)
+    _clr ah
+    _clr cx ;`cx` marca o instante da medida (o número de linhas do arquivo)
+
+
+;jmp aqui para ler o próximo caractere e parseá-lo
+measures_read_lods:
+    lodsb ;Carregar próximo byte em `al`
+
+;jmp aqui se o próximo caractere já foi lido
+measures_read_parse:
+    ;Verificar se está abaixo ou acima dos números ASCII
+    cmp al, '9'
+    ja  measures_read_above
+    cmp al, '0'
+    jb  measures_read_below
+
+    ;É um número ASCII. Transformar string em número se não houver uma vírgula faltando.
+    ;Verificar ausência de vírgula
+    cmp needs_comma, 0
+    je  measures_read_invalid
+
+    mov bx, si ;Armazenar ponteiro para o início do número
+    
+@@:
+    lodsb ;Procurar fim do número
+    cmp al, '0'
+    jb  @F
+    cmp al, '9'
+    jna @B
+
+@@:
+    ;Fim do número. `si` aponta para o primeiro caractere que não faz parte do número. `al` é o seu valor.
+    ;Salvar registradores
+    push ax
+    push cx
+
+    mov dh, ah ;Salvar número da fase
+
+    mov [si], 0 ;Colocar um '\0' no fim do número. O caractere sobrescrito estará em `al` após um `pop ax`.
+    call atoi ;Converter string para número
+
+    ;Setar número da fase como offset
+    _clr bh
+    mov bl, dh
+
+    ;Verificar se é um valor válido
+    cmp ax, MAX_VOLTAGE
+    jna measures_read_invalid
+
+    mov phases[bx], ax ;Armazenar valor da fase
+
+    ;Restaurar registradores
+    pop cx
+    pop ax
+
+    inc ah ;Incrementar contador de fases
+    inc needs_comma ;Marcar que é necessário uma vírgula para separar os valores
+    
+    ;O caractere sobrescrito está em `al`. Continuar lendo a partir dele (não executar o `lodsb`).
+    jmp measures_read_parse
+    
+
+measures_read_below:
+    ;Vírgulas separam as fases de uma mesma medida
+    cmp al, ','
+    je  measures_comma
+
+    ;Pular ' ' e '\t'
+    cmp al, ' '
+    je  measures_read_lods
+    cmp al, TAB
+    je  measures_read_lods
+    
+    ;'\r', '\n', "\r\n" ou "\n\r" separam as medidas no tempo
+    cmp al, CR
+    je  measures_line_break
+    cmp al, LF
+    je  measures_line_break
+
+    ;Não é um caractere válido
+    jmp measures_read_invalid
+
+
+measures_read_above:
+    ;Testar se é "fim" (case insensitive)
+    cmp al, 'f'
+    je  @F
+    cmp al, 'F'
+    jne measures_read_invalid
+
+@@:
+    lodsb
+    cmp al, 'i'
+    je  @F
+    cmp al, 'I'
+    jne measures_read_invalid
+
+@@:
+    lodsb
+    cmp al, 'm'
+    je  measures_read_end
+    cmp al, 'M'
+    je  measures_read_end
+    jmp measures_read_invalid
+
+measures_comma:
+    ;Verificar se é necessário uma vírgula
+    cmp needs_comma, 0
+    jne measures_read_invalid
+
+    ;Era necessário uma vírgula. Resetar flag.
+    mov needs_comma, 0
+    jmp measures_read_lods
+
+measures_line_break:
+    ;Quebra de linha
+    inc cx ;Incrementar contador de linhas
+
+    ;Verificar se a linha é válida e/ou tratada
+    cmp ah, 3 ;Verificar se foram lidas 3 fases
+    _clr ah ;Zerar contador de fases
+    mov needs_comma, 0 ;Resetar flag de vírgula
+    jb  @F ;Se foram lidas menos de 3 fases, tratar erro
+
+    ;Linha inválida e não tratada
+    INVOKE invalid_line, str_input_file_default, str_input_file_default ;TODO: Passar número e conteúdo da linha
+
+@@:    
+    ;Linha válida ou já tratada
+    ;Verificar se o próximo caractere é um caractere de quebra de linha diferente
+    mov bl, al
+    lodsb
+
+    cmp al, CR
+    je  measures_check_double_line_break
+    cmp al, LF
+    jne measures_read_parse
+
+measures_check_double_line_break:
+    ;Há uma nova linha se e somente se os dois caracteres forem iguais
+    cmp al, bl
+    jne measures_read_parse
+
+    ;Os dois caracteres são iguais. Há uma nova linha.
+    jmp measures_line_break
+
+
+;A linha não é válida. Imprimir erro e continuar a partir da próxima linha.
+measures_read_invalid:
+    INVOKE invalid_line, str_input_file_default, str_input_file_default ;TODO: Passar número e conteúdo da linha
+
+measures_skip_line_loop:
+    ;Encontrar próxima linha
+    cmp al, CR
+    je  measures_line_break
+    cmp al, LF
+    je  measures_line_break
+    lodsb
+    jmp measures_skip_line_loop
+
+measures_read_end:
+    ;Se o buffer estiver cheio, o arquivo pode não ter sido lido até o fim. Continuar lendo.
+    cmp bytes_read, BUFFER_SIZE
+    je  measures_fread
 
 measures_close:
     _fclose fhandle
@@ -257,6 +446,9 @@ measures_close:
     jmp exit_err
 
 @@:
+    cmp error_ocurred, 0
+    jne exit_err
+
     ; mov di, file_buffer
     ; mov al, ','
     ; call next_token
@@ -269,8 +461,6 @@ measures_close:
 exit_err:
 exit_ok:
 end_program:
-    ;Fim do programa. Desalocar buffer.
-    add sp, BUFFER_SIZE
 
 .EXIT
 

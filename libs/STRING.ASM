@@ -1,23 +1,6 @@
 ; Procedimentos relacionados a strings
 ;======================================
 
-strcpy      PROC    NEAR
-    _clr bx
-
-strcpy_loop:
-    mov ax, [si]
-    mov [di], ax
-    _tst ax
-    jz  strcpy_end
-
-    inc bx
-    jmp strcpy_loop
-
-strcpy_end:
-    ret
-strcpy      ENDP             
-
-
 ;Substitui todas as instâncias do separador por '\0', transformando uma string em uma sequência de tokens.
 tokenize    PROC    NEAR
     _clr bx
