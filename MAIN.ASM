@@ -1,12 +1,19 @@
 ;Macros e constantes fixas
 INCLUDE <LIBS\SYSCALL.ASM>
 INCLUDE <LIBS\ASCII.ASM>
-INCLUDE <LIBS\CESAR.ASM>
+INCLUDE <LIBS\PSEUDO.ASM>
 
 ;Parâmetros do programa
 STACK_SIZE  EQU 0400h ;(1 kb)
 BUFFER_SIZE EQU 2000h ;(16 kb)
 MAX_VOLTAGE EQU 499
+
+VOLTAGE_NONE EQU 0
+VOLTAGE_BAD  EQU -1
+VOLTAGE_GOOD EQU 1
+
+VOLTAGE_NONE_THRESHOLD EQU 9
+VOLTAGE_GOOD_RANGE     EQU 10
 
 .MODEL small
 
@@ -23,6 +30,7 @@ MAX_VOLTAGE EQU 499
     str_prtprm_i              DB "Arquivo de entrada: ",0
     str_prtprm_o              DB CR,LF,"Arquivo de saida: ",0
     str_prtprm_v              DB CR,LF,"Tensao esperada: ",0
+    str_measure_time          DB "Tempo de medida: ",0
 
     ;Strings constantes de erro
     str_error                 DB "ERRO: ",0
@@ -40,22 +48,24 @@ MAX_VOLTAGE EQU 499
     str_invalid_measure3      DB DQUOTE,CR,LF,0
 
     ;Variáveis para a CLI
-    command     DB 127 DUP(?)
-    input_file  DW OFFSET str_input_file_default
-    output_file DW OFFSET str_output_file_default
-    voltage     DW 127
-    voltage_str DW OFFSET str_voltage_default
+    command              DB 127 DUP(?) ;Comando que chamou o programa
+    input_file           DW OFFSET str_input_file_default ;Arquivo de medidas
+    output_file          DW OFFSET str_output_file_default ;Arquivo de relatório
+    expected_voltage     DW 127 ;Tensão esperada nas medidas
+    expected_voltage_str DW OFFSET str_voltage_default ;String da tensão esperada
 
     ;Variáveis para manipulação de arquivos
     fhandle         DW ?
     file_buffer     DB BUFFER_SIZE DUP(?)
     bytes_read      DW ?
-    
+
+    ;Variáveis de leitura de medidas
+    needs_comma     DB 0 ;Flag que indica se é necessário uma vírgula agora para separar os valores
+    voltage_quality DB VOLTAGE_NONE ;Qualidade da tensão da medida
+
     ;Outras variáveis
+    int_buffer    DB 6 DUP(?) ;Buffer para conversão de inteiros para string. Espaço para 65535 + '\0'.
     error_ocurred DB 0 ;Flag de erro para quando o erro não pode terminar o programa (por exemplo, enquanto um arquivo está aberto)
-    phases        DW 3 DUP(?)
-    needs_comma   DB 0 ;Flag que indica se é necessário uma vírgula agora para separar os valores
-    int_buffer    DB 6 DUP(?) ;Buffer para conversão de inteiros para string. Espaço para 65535 + '\0'.        
 
 
 .CODE
@@ -64,6 +74,7 @@ MAX_VOLTAGE EQU 499
 INCLUDE <LIBS\STRING.ASM>
 INCLUDE <LIBS\CECHIN.ASM>
 INCLUDE <LIBS\CLI.ASM>
+INCLUDE <LIBS\CLOCK.ASM>
 
 _print      MACRO   msg:REQ, copy:=<lea>
 	copy bx, msg
@@ -201,8 +212,8 @@ cli_v:
     jmp exit_err
 
 cli_v_valid:
-    mov voltage_str, di ;Armazenar string do valor da tensão
-    mov voltage, ax ;Armazenar valor da tensão
+    mov expected_voltage_str, di ;Armazenar string do valor da tensão
+    mov expected_voltage, ax ;Armazenar valor da tensão
 
 cli_continue:
     dec cx
@@ -215,7 +226,7 @@ cli_end:
     _print str_prtprm_o
     _print output_file, mov
     _print str_prtprm_v
-    _print voltage_str, mov
+    _print expected_voltage_str, mov
     _print str_crlf
 
 
@@ -263,6 +274,7 @@ measures_read_setup:
     _clr ah
     _clr cx ;`cx` marca a linha atual (o número de linhas do arquivo)
     mov di, si ;`di` marca o início da linha atual
+    mov voltage_quality, VOLTAGE_NONE ;Inicializar qualidade da tensão
 
 
 ;jmp aqui para ler o próximo caractere e parseá-lo
@@ -310,10 +322,6 @@ measures_read_parse:
     mov BYTE PTR [si-1], 0 ;Colocar um '\0' no fim do número. O caractere sobrescrito estará em `al` após um `pop ax`.
     call atoi ;Converter string para número
 
-    ;Setar número da fase como offset
-    _clr bh
-    mov bl, dh
-
     ;Verificar se é um valor válido
     cmp ax, MAX_VOLTAGE
     jna @F
@@ -323,12 +331,55 @@ measures_read_parse:
     pop cx
     pop ax
     mov BYTE PTR [si-1], al ;O caractere sobrescrito está em `al`. Restaurá-lo.
-
     jmp measures_read_invalid ;Linha inválida
 
 @@:
-    mov phases[bx], ax ;Armazenar valor da fase
+    ;Verificar a qualidade da tensão até então
+    cmp voltage_quality, VOLTAGE_NONE
 
+    ;Ruim: Pelo menos uma das fases medidas não estava nem "sem tensão" nem com tensão "boa".
+    ;Não importa a qualidade da tensão de nenhuma das outras fases, a qualidade da tensão da medida é "ruim".
+    js  measures_voltage_end
+
+    ;Bom: Até agora, todas as fases estavam com tensão "boa".
+    ;A qualidade da tensão é "boa" se e somente se cada uma das fases tiverem tensão "boa".
+    ;Portanto a qualidade da tensão da medida então é setada para a qualidade da tensão da fase atual.
+    jne measures_voltage_set
+
+    ;Sem tensão: Até agora, todas as fases medidas estavam sem tensão, ou esta é a primeira fase.
+    ;A qualidade da tensão é "sem tensão" se e somente se cada uma das fases forem "sem tensão"
+
+    ;Se a tensão for menor ou igual a VOLTAGE_NONE_THRESHOLD, a qualidade da tensão é "sem tensão",
+    ;e portanto não é necessário alterar a qualidade da tensão.
+    ;Se for maior que isso, a qualidade da tensão da medida não pode ser "sem tensão".
+    cmp ax, VOLTAGE_NONE_THRESHOLD
+    jbe measures_voltage_end
+
+measures_voltage_set:
+    ;A tensão não é "sem tensão"
+    ;A qualidade da tensão da medida então é setada para a qualidade da tensão da fase atual
+    sub ax, expected_voltage ;Obter a diferença entre a tensão esperada e a tensão medida
+    _abs ax ;Obter o módulo da diferença
+    cmp ax, VOLTAGE_GOOD_RANGE ;Verificar se a diferença é menor ou igual a VOLTAGE_GOOD_RANGE
+    jbe @F
+
+    ;Se não for, a qualidade da tensão é "ruim"
+    mov voltage_quality, VOLTAGE_BAD
+    jmp measures_voltage_end
+
+@@:
+    ;Se for, a qualidade da tensão da medida é boa se e somente se esta for a primeira fase
+    cmp dh, 1
+    je  @F
+
+    ;Não é a primeira fase, o que significa que uma das fases anteriores já teve uma qualidade de tensão "sem tensão"
+    mov voltage_quality, VOLTAGE_BAD;Logo, a qualidade da tensão da medida é "ruim"
+
+@@:
+    ;É a primeira fase
+    mov voltage_quality, VOLTAGE_GOOD
+
+measures_voltage_end:
     ;Restaurar registradores
     pop cx
     pop ax
@@ -427,6 +478,7 @@ measures_line_ok:
     _clr ah
     mov needs_comma, 0 ;Resetar flag de vírgula
     mov di, si ;Salvar início da nova linha. `si` aponta para o caractere após a quebra de linha
+    mov voltage_quality, VOLTAGE_NONE ;Resetar qualidade da tensão
 
     ;Linha válida ou já tratada
     ;Verificar se o próximo caractere é um caractere de quebra de linha diferente
@@ -478,11 +530,16 @@ measures_close:
     cmp error_ocurred, 0
     jne exit_err
 
-    ; mov di, file_buffer
-    ; mov al, ','
-    ; call next_token
 
-    ;TODO: Relatório impresso
+    ;Não houve erro. Imprimir tempo de medida.
+    mov ax, cx
+    mov bx, OFFSET file_buffer ;Já dá pra reutilizar o buffer do arquivo
+    call s2hms
+    call hms2str
+    _print str_measure_time
+    _print file_buffer
+    _print str_crlf
+
     ;TODO: Relatório arquivado
 
     jmp exit_ok
