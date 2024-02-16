@@ -1,6 +1,18 @@
 ; Procedimentos relacionados a strings
 ;======================================
 
+;Calcula o tamanho de uma string
+;`di` deve apontar para o início da string
+;Ao fim da execução, `cx` contém o tamanho da string
+strlen      PROC    NEAR
+    mov cx, -1
+    _clr al ;Procurar por '\0'
+    repne scasb
+    not cx ;(not n) <=> (neg n+1) para n < 0
+    dec cx ;Descontar o '\0'
+    ret
+strlen      ENDP
+
 ;Substitui todas as instâncias do separador por '\0', transformando uma string em uma sequência de tokens.
 tokenize    PROC    NEAR
     _clr bx

@@ -10,6 +10,12 @@ _syscall    MACRO   fncode:REQ, idreg:=<ah>
     int 21h
 ENDM
 
+;
+_fcreate   MACRO   file_name:REQ
+    mov dx, file_name
+    _syscall 3Ch
+ENDM
+
 ;Retorno:
 ;   `cf` <=> erro
 ;   `ax` = handle ou erro
@@ -32,6 +38,21 @@ _fread      MACRO   file:REQ, buffer:REQ, size:REQ
     mov dx, buffer                    
     _syscall 3Fh
 ENDM
+
+; ;Argumentos:
+; ;   `file` - File handle
+; ;   `buffer` - EA do buffer em DS
+; ;   `size` - Número de bytes a serem escritos
+; ;
+; ;Retorno:
+; ;   `cf` <=> erro
+; ;   `ax` = número de bytes escritos
+; _fwrite     MACRO   file:REQ, buffer:REQ;, size:REQ
+;     mov bx, file                      
+;     ;mov cx, size
+;     mov dx, buffer                 
+;     _syscall 40h
+; ENDM
 
 ;Argumentos:
 ;   `file` - File handle

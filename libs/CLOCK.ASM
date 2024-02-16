@@ -43,6 +43,5 @@ no_minutes:
     mov al, dh
     cbw ;Converter segundos para WORD
     call sprintf_w ;Converter segundos para string
-    mov BYTE PTR [bx], 0 ;Inserir '\0'
     ret
 hms2str     ENDP

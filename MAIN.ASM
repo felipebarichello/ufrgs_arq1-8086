@@ -46,13 +46,17 @@ VOLTAGE_GOOD_RANGE     EQU 10
     str_invalid_measure1      DB "Linha [",0
     str_invalid_measure2      DB "] invalida: ",DQUOTE,0
     str_invalid_measure3      DB DQUOTE,CR,LF,0
+    str_error_ofcreate        DB "Erro ao criar arquivo de saida.",CR,LF,0
 
     ;Variáveis para a CLI
-    command              DB 127 DUP(?) ;Comando que chamou o programa
-    input_file           DW OFFSET str_input_file_default ;Arquivo de medidas
-    output_file          DW OFFSET str_output_file_default ;Arquivo de relatório
-    expected_voltage     DW 127 ;Tensão esperada nas medidas
-    expected_voltage_str DW OFFSET str_voltage_default ;String da tensão esperada
+    command                   DB 127 DUP(?) ;Comando que chamou o programa
+    input_file_name_size      DW LENGTHOF str_input_file_default-1
+    input_file                DW OFFSET str_input_file_default ;Arquivo de medidas
+    output_file_name_size     DW LENGTHOF str_output_file_default-1
+    output_file               DW OFFSET str_output_file_default ;Arquivo de relatório
+    expected_voltage          DW 127 ;Tensão esperada nas medidas
+    expected_voltage_str_size DW LENGTHOF str_voltage_default-1
+    expected_voltage_str      DW OFFSET str_voltage_default ;String da tensão esperada
 
     ;Variáveis para manipulação de arquivos
     fhandle         DW ?
@@ -66,7 +70,8 @@ VOLTAGE_GOOD_RANGE     EQU 10
     ;Outras variáveis
     int_buffer    DB 6 DUP(?) ;Buffer para conversão de inteiros para string. Espaço para 65535 + '\0'.
     error_ocurred DB 0 ;Flag de erro para quando o erro não pode terminar o programa (por exemplo, enquanto um arquivo está aberto)
-
+    clock_size    DW ? ;Tamanho utilizado do buffer de relógio
+    clock_buffer  DB 9 DUP(?) ;Buffer para conversão de tempo para string. Espaço para "99:59:59" + '\0'.
 
 .CODE
 
@@ -180,8 +185,13 @@ cli_i:
 
     mov input_file, di ;Armazenar nome do arquivo de entrada
     
-    mov bx, di
+    ;Calcular tamanho do nome do arquivo
+    push cx
+    call strlen
+    mov input_file_name_size, cx
+    pop cx
 
+    dec di ;Voltar para o separador para o próximo token
     jmp cli_continue
 
 cli_o:
@@ -190,6 +200,14 @@ cli_o:
     jc  exit_err
 
     mov output_file, di ;Armazenar nome do arquivo de saída
+
+    ;Calcular tamanho do nome do arquivo
+    push cx
+    call strlen
+    mov output_file_name_size, cx
+    pop cx
+
+    dec di ;Voltar para o separador para o próximo token
     jmp cli_continue
 
 cli_v:
@@ -212,8 +230,16 @@ cli_v:
     jmp exit_err
 
 cli_v_valid:
-    mov expected_voltage_str, di ;Armazenar string do valor da tensão
     mov expected_voltage, ax ;Armazenar valor da tensão
+    mov expected_voltage_str, di ;Armazenar string do valor da tensão
+
+    ;Calcular tamanho da string do valor da tensão
+    push cx
+    call strlen
+    mov expected_voltage_str_size, cx
+    pop cx
+
+    dec di ;Voltar para o separador para o próximo token
 
 cli_continue:
     dec cx
@@ -533,14 +559,72 @@ measures_close:
 
     ;Não houve erro. Imprimir tempo de medida.
     mov ax, cx
-    mov bx, OFFSET file_buffer ;Já dá pra reutilizar o buffer do arquivo
+    mov bx, OFFSET clock_buffer
     call s2hms
     call hms2str
+    sub bx, OFFSET clock_buffer
+    mov clock_size, bx
     _print str_measure_time
-    _print file_buffer
+    _print clock_buffer
     _print str_crlf
 
-    ;TODO: Relatório arquivado
+    ;Criar arquivo de relatório
+    _fcreate output_file
+    jnc @F
+
+    ;Falha ao criar arquivo de relatório. Tratar erro.
+    _error str_error_ofcreate
+    jmp exit_err
+
+@@:
+    mov fhandle, ax
+    
+    ;Escrever relatório
+    ;Escrever informações dos parâmetros
+    mov bx, ax                      
+    mov dx, OFFSET str_prtprm_i
+    mov cx, LENGTHOF str_prtprm_i-1
+    _syscall 40h
+
+    mov dx, input_file
+    mov cx, input_file_name_size
+    _syscall 40h
+
+    mov dx, OFFSET str_prtprm_o
+    mov cx, LENGTHOF str_prtprm_o-1
+    _syscall 40h
+
+    mov dx, output_file
+    mov cx, output_file_name_size
+    _syscall 40h
+
+    mov dx, OFFSET str_prtprm_v
+    mov cx, LENGTHOF str_prtprm_v-1
+    _syscall 40h
+
+    mov dx, expected_voltage_str
+    mov cx, expected_voltage_str_size
+    _syscall 40h
+
+    mov dx, OFFSET str_crlf
+    mov cx, LENGTHOF str_crlf-1
+    _syscall 40h
+
+    ;Escrever tempo de medida
+    mov cx, LENGTHOF str_measure_time-1
+    mov dx, OFFSET str_measure_time
+    _syscall 40h
+
+    mov dx, OFFSET clock_buffer
+    mov cx, clock_size
+    _syscall 40h
+
+    mov dx, OFFSET str_crlf
+    mov cx, LENGTHOF str_crlf-1
+    _syscall 40h
+    
+    ;Fechar arquivo
+    _fclose fhandle
 
     jmp exit_ok
 
