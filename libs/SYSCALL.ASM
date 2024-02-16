@@ -39,20 +39,32 @@ _fread      MACRO   file:REQ, buffer:REQ, size:REQ
     _syscall 3Fh
 ENDM
 
-; ;Argumentos:
-; ;   `file` - File handle
-; ;   `buffer` - EA do buffer em DS
-; ;   `size` - Número de bytes a serem escritos
-; ;
-; ;Retorno:
-; ;   `cf` <=> erro
-; ;   `ax` = número de bytes escritos
-; _fwrite     MACRO   file:REQ, buffer:REQ;, size:REQ
-;     mov bx, file                      
-;     ;mov cx, size
-;     mov dx, buffer                 
-;     _syscall 40h
-; ENDM
+;Argumentos:
+;   `bx` - File handle
+;   `buffer` - EA do buffer em DS
+;   `size` - Número de bytes a serem escritos
+;
+;Retorno:
+;   `cf` <=> erro
+;   `ax` = número de bytes escritos
+_fwrite     MACRO   buffer:REQ, size:REQ
+    mov dx, buffer
+    mov cx, size
+    _syscall 40h
+ENDM
+
+;Argumentos:
+;   `bx` - File handle
+;   `msg` - EA do buffer em DS
+;
+;Retorno:
+;   `cf` <=> erro
+;   `ax` = número de bytes escritos
+_fwrite_msg MACRO   msg:REQ
+    mov dx, OFFSET msg                 
+    mov cx, LENGTHOF msg-1
+    _syscall 40h
+ENDM
 
 ;Argumentos:
 ;   `file` - File handle

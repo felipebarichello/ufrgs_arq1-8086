@@ -581,47 +581,21 @@ measures_close:
     
     ;Escrever relatório
     ;Escrever informações dos parâmetros
-    mov bx, ax                      
-    mov dx, OFFSET str_prtprm_i
-    mov cx, LENGTHOF str_prtprm_i-1
-    _syscall 40h
-
-    mov dx, input_file
-    mov cx, input_file_name_size
-    _syscall 40h
-
-    mov dx, OFFSET str_prtprm_o
-    mov cx, LENGTHOF str_prtprm_o-1
-    _syscall 40h
-
-    mov dx, output_file
-    mov cx, output_file_name_size
-    _syscall 40h
-
-    mov dx, OFFSET str_prtprm_v
-    mov cx, LENGTHOF str_prtprm_v-1
-    _syscall 40h
-
-    mov dx, expected_voltage_str
-    mov cx, expected_voltage_str_size
-    _syscall 40h
-
-    mov dx, OFFSET str_crlf
-    mov cx, LENGTHOF str_crlf-1
-    _syscall 40h
-
-    ;Escrever tempo de medida
-    mov cx, LENGTHOF str_measure_time-1
-    mov dx, OFFSET str_measure_time
-    _syscall 40h
-
-    mov dx, OFFSET clock_buffer
-    mov cx, clock_size
-    _syscall 40h
-
-    mov dx, OFFSET str_crlf
-    mov cx, LENGTHOF str_crlf-1
-    _syscall 40h
+    mov bx, ax ;Carregar handle do arquivo de relatório
+    
+    _fwrite_msg str_prtprm_i
+    _fwrite input_file, input_file_name_size
+    _fwrite_msg str_prtprm_o
+    _fwrite output_file, output_file_name_size
+    _fwrite_msg str_prtprm_v
+    _fwrite expected_voltage_str, expected_voltage_str_size
+    _fwrite_msg str_crlf
+    _fwrite_msg str_crlf
+    _fwrite_msg str_measure_time
+    mov dx, OFFSET clock_buffer ;Não dá pra usar a macro aqui
+    mov cx, clock_size          ;
+    _syscall 40h                ;
+    _fwrite_msg str_crlf
     
     ;Fechar arquivo
     _fclose fhandle
