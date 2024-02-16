@@ -20,17 +20,19 @@ VOLTAGE_GOOD_RANGE     EQU 10
 .STACK      STACK_SIZE
 
 .DATA
-    ;Strings constantes de uso interno
+    ;Strings constantes defaults
     str_input_file_default    DB "a.in",0
     str_output_file_default   DB "a.out",0
     str_voltage_default       DB "127",0
 
-    ;Strings constantes de relatório
+    ;Strings constantes não relacionadas a erros
     str_crlf                  DB CR,LF,0
     str_prtprm_i              DB "Arquivo de entrada: ",0
     str_prtprm_o              DB CR,LF,"Arquivo de saida: ",0
     str_prtprm_v              DB CR,LF,"Tensao esperada: ",0
     str_measure_time          DB "Tempo de medida: ",0
+    str_report_good           DB "Tempo de tensao adequada: ",0
+    str_report_none           DB "Tempo sem tensao: ",0
 
     ;Strings constantes de erro
     str_error                 DB "ERRO: ",0
@@ -63,9 +65,11 @@ VOLTAGE_GOOD_RANGE     EQU 10
     file_buffer     DB BUFFER_SIZE DUP(?)
     bytes_read      DW ?
 
-    ;Variáveis de leitura de medidas
-    needs_comma     DB 0 ;Flag que indica se é necessário uma vírgula agora para separar os valores
-    voltage_quality DB VOLTAGE_NONE ;Qualidade da tensão da medida
+    ;Variáveis de leitura de arquivo de medidas
+    needs_comma       DB 0 ;Flag que indica se é necessário uma vírgula agora para separar os valores
+    voltage_quality   DB VOLTAGE_NONE ;Qualidade da tensão da medida
+    voltage_time_good DW 0 ;Tempo total de tensão adequada
+    voltage_time_none DW 0 ;Tempo total sem tensão
 
     ;Outras variáveis
     int_buffer    DB 6 DUP(?) ;Buffer para conversão de inteiros para string. Espaço para 65535 + '\0'.
@@ -476,7 +480,7 @@ measures_line_break:
 
     ;Verificar se a linha é válida
     cmp ah, 3 ;Verificar se foram lidas 3 fases
-    je  measures_line_ok
+    je  measures_line_end
 
     ;Se foram lidas um número de fases diferente de 3,
     ;ou caso a linha já tenha sido marcada como inválida, tratar erro
@@ -500,23 +504,36 @@ measures_line_break:
 
     pop ax ;Restaurar caractere atual de quebra de linha
 
-measures_line_ok:
+measures_line_end:
     _clr ah
     mov needs_comma, 0 ;Resetar flag de vírgula
     mov di, si ;Salvar início da nova linha. `si` aponta para o caractere após a quebra de linha
+
+    ;
+    cmp voltage_quality, VOLTAGE_NONE
+    js  measures_inc_quality_bad ;Tensão ruim
+    jne  measures_inc_quality_good ;Tensão adequada
+    inc voltage_time_none ;Sem tensão. Incrementar tempo sem tensão
+
+measures_inc_quality_good:
+    inc voltage_time_good ;Incrementar tempo de tensão adequada
+    jmp measures_check_double_line_break
+
+measures_inc_quality_bad:
     mov voltage_quality, VOLTAGE_NONE ;Resetar qualidade da tensão
 
+measures_check_double_line_break:
     ;Linha válida ou já tratada
     ;Verificar se o próximo caractere é um caractere de quebra de linha diferente
     mov bl, al
     lodsb
 
     cmp al, CR
-    je  measures_check_double_line_break
+    je  @F
     cmp al, LF
     jne measures_read_parse
 
-measures_check_double_line_break:
+@@:
     ;Há uma nova linha se e somente se os dois caracteres forem iguais
     cmp al, bl
     je  measures_line_break ;Os dois caracteres são iguais. São duas quebras de linha.
@@ -558,10 +575,10 @@ measures_close:
 
 
     ;Não houve erro. Imprimir tempo de medida.
-    mov ax, cx
-    mov bx, OFFSET clock_buffer
-    call s2hms
-    call hms2str
+    mov ax, cx ;Segundos
+    mov bx, OFFSET clock_buffer ;Buffer
+    call s2hms ;Segundos para horas, minutos, segundos
+    call hms2str ;Horas, minutos, segundos para string
     sub bx, OFFSET clock_buffer
     mov clock_size, bx
     _print str_measure_time
@@ -582,7 +599,6 @@ measures_close:
     ;Escrever relatório
     ;Escrever informações dos parâmetros
     mov bx, ax ;Carregar handle do arquivo de relatório
-    
     _fwrite_msg str_prtprm_i
     _fwrite input_file, input_file_name_size
     _fwrite_msg str_prtprm_o
@@ -591,12 +607,47 @@ measures_close:
     _fwrite expected_voltage_str, expected_voltage_str_size
     _fwrite_msg str_crlf
     _fwrite_msg str_crlf
+
+    ;Escrever tempo total de medida
     _fwrite_msg str_measure_time
     mov dx, OFFSET clock_buffer ;Não dá pra usar a macro aqui
     mov cx, clock_size          ;
-    _syscall 40h                ;
+    _syscall FWRITE             ;
     _fwrite_msg str_crlf
-    
+
+    ;Calcular tempo de tensão adequada
+    _fwrite_msg str_report_good
+    mov ax, voltage_time_good ;Segundos
+    mov bx, OFFSET clock_buffer ;Buffer
+    call s2hms ;Segundos para horas, minutos, segundos
+    call hms2str ;Horas, minutos, segundos para string
+
+    ;Escrever tempo de tensão adequada
+    mov dx, OFFSET clock_buffer
+    ; lea cx, [bx - OFFSET clock_buffer] ;Não funciona por algum motivo
+    mov cx, bx
+    sub cx, OFFSET clock_buffer
+    mov bx, fhandle
+    _syscall FWRITE
+    _fwrite_msg str_crlf
+
+    ;Calcular tempo sem tensão
+    _fwrite_msg str_report_none
+    mov ax, voltage_time_none ;Segundos
+    mov bx, OFFSET clock_buffer ;Buffer
+    call s2hms ;Segundos para horas, minutos, segundos
+    call hms2str ;Horas, minutos, segundos para string
+
+    ;Escrever tempo sem tensão
+    mov dx, OFFSET clock_buffer
+    ; lea cx, [bx - OFFSET clock_buffer] ;Não funciona por algum motivo
+    mov cx, bx
+    sub cx, OFFSET clock_buffer
+    mov bx, fhandle
+    _syscall FWRITE
+    _fwrite_msg str_crlf
+
+
     ;Fechar arquivo
     _fclose fhandle
 
