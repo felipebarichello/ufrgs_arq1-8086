@@ -43,6 +43,7 @@ VOLTAGE_GOOD_RANGE     EQU 10
     str_invalid_voltage       DB "Parametro da opcao [-v] deve ser 127 ou 220.",CR,LF,0
     str_error_ifopen          DB "Erro ao abrir arquivo de entrada.",CR,LF,0
     str_error_ifread          DB "Erro ao ler arquivo de entrada.",CR,LF,0
+    str_error_too_large       DB "Arquivo de entrada grande demais",CR,LF,0
     str_error_not_found       DB "Arquivo nao encontrado.",CR,LF,0
     str_error_ifclose         DB "Erro ao fechar arquivo de entrada.",CR,LF,0
     str_invalid_measure1      DB "Linha [",0
@@ -289,10 +290,6 @@ measures_fread:
     mov si, OFFSET file_buffer ;Setar `si` para usar com instruções de string
 
     ;Ler arquivo para o buffer. São lidos no máximo BUFFER_SIZE bytes.
-    ;Eu tinha feito uma boa parte do código pra ler o arquivo em partes menores,
-    ;mas como este foi um semestre de quatro meses, às 10 horas de sexta-feira,
-    ;eu dei um `git reset --hard` e me contentei com um buffer grande.
-    ;Não está pedindo nas especificações, de qualquer forma.
     _fread fhandle, si, BUFFER_SIZE
     jnc measures_read_setup
 
@@ -304,6 +301,18 @@ measures_fread:
 measures_read_setup:
     mov bytes_read, ax ;Armazenar quantidade de bytes lidos
 
+    ;Eu tinha feito uma boa parte do código pra ler o arquivo em partes menores,
+    ;mas como este foi um semestre de quatro meses, às 10 horas de sexta-feira,
+    ;eu dei um `git reset --hard` e me contentei com um buffer grande.
+    ;Não está pedindo nas especificações, de qualquer forma.
+    cmp ax, BUFFER_SIZE ;Verificar se o buffer está cheio
+    jne @F ;Se estiver, o arquivo é muito grande
+
+    inc error_ocurred
+    _error str_error_too_large
+    jmp measures_close
+
+@@:
     ;`ah` conta quantas fases foram lidas na medida atual
     ;(ah < 0) => (linha inválida)
     _clr ah
