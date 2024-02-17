@@ -5,7 +5,7 @@ INCLUDE <LIBS\PSEUDO.ASM>
 
 ;Parâmetros do programa
 STACK_SIZE  EQU 0400h ;(1 kb)
-BUFFER_SIZE EQU 2000h ;(16 kb)
+BUFFER_SIZE EQU C000h ;(60 kb)
 MAX_VOLTAGE EQU 499
 
 VOLTAGE_NONE EQU 0
@@ -63,9 +63,9 @@ VOLTAGE_GOOD_RANGE     EQU 10
     ;Variáveis para manipulação de arquivos
     fhandle         DW ?
     file_buffer     DB BUFFER_SIZE DUP(?)
-    bytes_read      DW ?
 
     ;Variáveis de leitura de arquivo de medidas
+    bytes_read      DW ?
     needs_comma       DB 0 ;Flag que indica se é necessário uma vírgula agora para separar os valores
     voltage_quality   DB VOLTAGE_NONE ;Qualidade da tensão da medida
     voltage_time_good DW 0 ;Tempo total de tensão adequada
@@ -76,6 +76,7 @@ VOLTAGE_GOOD_RANGE     EQU 10
     error_ocurred DB 0 ;Flag de erro para quando o erro não pode terminar o programa (por exemplo, enquanto um arquivo está aberto)
     clock_size    DW ? ;Tamanho utilizado do buffer de relógio
     clock_buffer  DB 9 DUP(?) ;Buffer para conversão de tempo para string. Espaço para "99:59:59" + '\0'.
+
 
 .CODE
 
@@ -287,7 +288,11 @@ measures_open_end:
 measures_fread:
     mov si, OFFSET file_buffer ;Setar `si` para usar com instruções de string
 
-    ;Ler arquivo para o buffer. São lidos no máximo BUFFER_SIZE bytes por vez.
+    ;Ler arquivo para o buffer. São lidos no máximo BUFFER_SIZE bytes.
+    ;Eu tinha feito uma boa parte do código pra ler o arquivo em partes menores,
+    ;mas como este foi um semestre de quatro meses, às 10 horas de sexta-feira,
+    ;eu dei um `git reset --hard` e me contentei com um buffer grande.
+    ;Não está pedindo nas especificações, de qualquer forma.
     _fread fhandle, si, BUFFER_SIZE
     jnc measures_read_setup
 
@@ -302,7 +307,7 @@ measures_read_setup:
     ;`ah` conta quantas fases foram lidas na medida atual
     ;(ah < 0) => (linha inválida)
     _clr ah
-    _clr cx ;`cx` marca a linha atual (o número de linhas do arquivo)
+    _clr cx ;`cx` conta as linhas lidas
     mov di, si ;`di` marca o início da linha atual
     mov voltage_quality, VOLTAGE_NONE ;Inicializar qualidade da tensão
 
@@ -557,10 +562,6 @@ measures_skip_line_loop:
     jmp measures_skip_line_loop
 
 measures_read_end:
-    ;Se o buffer estiver cheio, o arquivo pode não ter sido lido até o fim. Continuar lendo.
-    cmp bytes_read, BUFFER_SIZE
-    je  measures_fread
-
 measures_close:
     _fclose fhandle
     jnc @F
