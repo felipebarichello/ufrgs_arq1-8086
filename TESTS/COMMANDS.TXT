@@ -34,7 +34,7 @@ prog -i in4.txt
 
 prog -i in5.txt
 - Informa erro na linha 2
-- Informa erro na linha 3
+- Informa erro na linha 3 // É um erro do Cechin
 
 prog -i in6.txt -v 220
 - Gera arquivo a.out
