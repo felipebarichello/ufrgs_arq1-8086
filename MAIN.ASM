@@ -521,6 +521,7 @@ measures_line_end:
     js  measures_inc_quality_bad ;Tensão ruim
     jne  measures_inc_quality_good ;Tensão adequada
     inc voltage_time_none ;Sem tensão. Incrementar tempo sem tensão
+    jmp measures_measures_check_double_line_break
 
 measures_inc_quality_good:
     inc voltage_time_good ;Incrementar tempo de tensão adequada
