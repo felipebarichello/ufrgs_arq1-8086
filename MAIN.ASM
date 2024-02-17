@@ -5,7 +5,7 @@ INCLUDE <LIBS\PSEUDO.ASM>
 
 ;Parâmetros do programa
 STACK_SIZE  EQU 0400h ;(1 kb)
-BUFFER_SIZE EQU C000h ;(60 kb)
+BUFFER_SIZE EQU 0C000h ;(60 kb)
 MAX_VOLTAGE EQU 499
 
 VOLTAGE_NONE EQU 0
@@ -499,7 +499,9 @@ measures_line_break:
     _print str_invalid_measure1 ;Imprimir o começo da mensagem de erro
     mov ax, cx ;Número da linha
     mov bx, OFFSET int_buffer ;Carregar buffer
+    push cx
     call sprintf_w ;Transformar o número da linha em string
+    pop cx
     _print int_buffer ;Imprimir número da linha
     _print str_invalid_measure2 ;Imprimir o meio da mensagem de erro
 
