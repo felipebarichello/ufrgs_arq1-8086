@@ -516,20 +516,18 @@ measures_line_end:
     mov needs_comma, 0 ;Resetar flag de vírgula
     mov di, si ;Salvar início da nova linha. `si` aponta para o caractere após a quebra de linha
 
-    ;
-    cmp voltage_quality, VOLTAGE_NONE
+    cmp voltage_quality, VOLTAGE_NONE ;Verificar qualidade da tensão
+    mov voltage_quality, VOLTAGE_NONE ;Resetar qualidade da tensão
     js  measures_inc_quality_bad ;Tensão ruim
-    jne  measures_inc_quality_good ;Tensão adequada
+    jne measures_inc_quality_good ;Tensão adequada
     inc voltage_time_none ;Sem tensão. Incrementar tempo sem tensão
-    jmp measures_measures_check_double_line_break
+    jmp measures_check_double_line_break
 
 measures_inc_quality_good:
     inc voltage_time_good ;Incrementar tempo de tensão adequada
     jmp measures_check_double_line_break
 
 measures_inc_quality_bad:
-    mov voltage_quality, VOLTAGE_NONE ;Resetar qualidade da tensão
-
 measures_check_double_line_break:
     ;Linha válida ou já tratada
     ;Verificar se o próximo caractere é um caractere de quebra de linha diferente
